@@ -59,15 +59,15 @@ Learner_Consensus(id, value) = STOP; // learner has reached consensus
 
 // 2. Acceptor Failure
 || PaxosSystem_LearnerFailure = 
-    (Proposer(1, V1) || Proposer(2, V2) || Acceptor(1, NONE) || Acceptor(2, NONE) || Learner(1) [> STOP);
+    (Proposer(1, V1) || Proposer(2, V2) || Acceptor(1, NONE) || Acceptor(2, NONE) || Learner(1) -> STOP);
 
 // 3. Redundant Learner Failure
 || PaxosSystem_LearnerFailure = 
-    (Proposer(1, V1) || Proposer(2, V2) || Acceptor(1, NONE) || Acceptor(2, NONE) || Learner(1) [> STOP);
+    (Proposer(1, V1) || Proposer(2, V2) || Acceptor(1, NONE) || Acceptor(2, NONE) || Learner(1) -> STOP);
 
 // 4. Proposer Failure
 || PaxosSystem_ProposerFailure = 
-    ((Proposer(1, V1) [> STOP) || Proposer(2, V2) || Acceptor(1, NONE) || Acceptor(2, NONE) || Learner(1) || Learner(2));
+    ((Proposer(1, V1) -> STOP) || Proposer(2, V2) || Acceptor(1, NONE) || Acceptor(2, NONE) || Learner(1) || Learner(2));
 
 // 5. Conflicting Proposers
 || PaxosSystem_ConflictingProposers = 
