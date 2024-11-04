@@ -53,6 +53,48 @@ Learner(id) =
 
 Learner_Consensus(id, value) = STOP; // learner has reached consensus
 
-// System Composition
+// 1. Error-free Scenario
 || PaxosSystem = 
     (Proposer(1, V1) || Proposer(2, V2) || Acceptor(1, NONE) || Acceptor(2, NONE) || Learner(1) || Learner(2));
+
+// 2. Acceptor Failure
+|| PaxosSystem_LearnerFailure = 
+    (Proposer(1, V1) || Proposer(2, V2) || Acceptor(1, NONE) || Acceptor(2, NONE) || Learner(1) [> STOP);
+
+// 3. Redundant Learner Failure
+|| PaxosSystem_LearnerFailure = 
+    (Proposer(1, V1) || Proposer(2, V2) || Acceptor(1, NONE) || Acceptor(2, NONE) || Learner(1) [> STOP);
+
+// 4. Proposer Failure
+|| PaxosSystem_ProposerFailure = 
+    ((Proposer(1, V1) [> STOP) || Proposer(2, V2) || Acceptor(1, NONE) || Acceptor(2, NONE) || Learner(1) || Learner(2));
+
+// 5. Conflicting Proposers
+|| PaxosSystem_ConflictingProposers = 
+    (Proposer(1, V1) || Proposer(2, V2) || Acceptor(1, NONE) || Acceptor(2, NONE) || Learner(1) || Learner(2));
+
+// 6. Acceptor Accepting Two Different Values
+Acceptor_Conflict(id, acceptedValue) = 
+    prepare?id -> promise!id!PROMISED -> propose?id?value -> 
+    accept!id!value -> accepted!id!ACCEPTED -> // accept first value
+    propose?id?newValue -> // receive another propose with different value
+    accept!id!newValue -> accepted!id!ACCEPTED; // wrongly accept second value
+
+|| PaxosSystem_AcceptorConflict = 
+    (Proposer(1, V1) || Proposer(2, V2) || Acceptor_Conflict(1, NONE) || Acceptor(2, NONE) || Learner(1) || Learner(2));
+
+// 7. Insufficient Multi-identifier Majority
+Acceptor_RejectAll(id) = 
+    prepare?id -> promise!id!REJECTED -> Acceptor_RejectAll(id);
+
+|| PaxosSystem_InsufficientMajority = 
+    (Proposer(1, V1) || Proposer(2, V2) || Acceptor_RejectAll(1) || Acceptor(2, NONE) || Learner(1) || Learner(2));
+
+// 8. New Proposers Unable to Change Existing consensus
+|| PaxosSystem_StableConsensus = 
+    (Proposer(1, V1) || Proposer(2, V2) || Acceptor(1, V1) || Acceptor(2, V1) || Learner(1) || Learner(2));
+
+// Assertions
+assert PaxosSystem deadlockfree;
+assert PaxosSystem reaches (Learner_Consensus(1, V1) and Learner_Consensus(2, V1));
+
