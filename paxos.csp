@@ -1,0 +1,58 @@
+// Response statuses
+#define PROMISED 0
+#define REJECTED 1
+#define ACCEPTED 2
+
+// Values that may be proposed
+#define V1 1
+#define V2 2
+
+// Channels for communication between Proposer, Acceptor, and Learner
+// Assumption #1: All channels are perfectly reliable and synchronous.
+channel prepare 0;
+channel promise 0;
+channel propose 0;
+channel accept 0;
+channel accepted 0;
+
+// Define basic process for each role in Paxos
+
+// Proposer Process
+Proposer(id, value) = 
+    prepare!id -> // send prepare request
+    promise?id?response -> // receive promise response from Acceptor
+    (response == PROMISED -> propose!id!value -> Proposer_Accept(id, value)
+    [] response == REJECTED -> Proposer(id, value)); // retry if promise rejected
+
+Proposer_Accept(id, value) =
+    accept!id!value -> // send accept request to Acceptor
+    accepted?id?acceptResult -> // receive accepted result from Acceptor
+    (acceptResult == ACCEPTED -> Proposer_Consensus(id, value)
+    [] acceptResult == REJECTED -> Proposer(id, value)); // retry if rejected
+
+Proposer_Consensus(id, value) = STOP; // consensus achieved for this proposer
+
+// Acceptor Process
+Acceptor(id, acceptedValue) = 
+    prepare?id -> // receive prepare request from Proposer
+    (acceptedValue == NONE -> promise!id!PROMISED -> Acceptor_Promise(id)
+    [] acceptedValue != NONE -> promise!id!REJECTED -> Acceptor(id, acceptedValue)); // reject if already accepted
+
+Acceptor_Promise(id) =
+    propose?id?value -> // receive propose request
+    accept!id!value -> // send accept response
+    Acceptor_Accept(id, value);
+
+Acceptor_Accept(id, value) = 
+    accepted!id!ACCEPTED -> Acceptor(id, value); // confirm accepted value
+
+// Learner Process
+Learner(id) =
+    accepted?id?value -> // receive accepted value
+    Learner_Consensus(id, value);
+
+Learner_Consensus(id, value) = STOP; // learner has reached consensus
+
+// System Composition
+|| PaxosSystem = 
+    (Proposer(1, V1) || Proposer(2, V2) || Acceptor(1, NONE) || Acceptor(2, NONE) || Learner(1) || Learner(2));
