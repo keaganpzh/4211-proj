@@ -1,0 +1,59 @@
+// Response statuses
+#define PROMISED 0;
+#define REJECTED 1;
+#define ACCEPTED 2;
+
+// Channels for communication between Proposer, Acceptor, and Learner
+// Assumption #1: All channels are perfectly reliable and synchronous.
+channel P1A1 3;
+channel P1A1Accept 1;
+channel P1A2Accept 1;
+channel P1A3Accept 1;
+channel P1Ack 2;
+//Define basic process for each role in Paxos
+
+//msg from acceptor is of type (
+#define P1Val 10;
+#define P2Val 20;
+// Proposer Process
+var P1_numPromises = 0;
+var P1_max_m = -1;
+var P1_max_val = -1;
+
+var A1_max_n = -1; //last promise
+var A1_last_m = -1; //last accepted
+var A1_last_val =-1;
+
+
+var A2_max_n = -1; //last promise
+var A2_last_m = -1; //last accepted
+var A2_last_val =-1;
+
+var A3_max_n = -1; //last promise
+var A3_last_m = -1; //last accepted
+var A3_last_val =-1;
+#define goal A1_last_val == A2_last_val  A1_last_val == A3_last_val  A2_last_val == A3_last_val;
+
+Proposer1(n) = P1A1!n -> P1Ack?n1.m1.v1 -> P1Ack?n2.m2.v2 ->  P1Ack?n3.m3.v3 -> 
+  test1{if(n1 == n) {P1_numPromises = P1_numPromises + 1;}}-> test2{if(n2==n) {P1_numPromises = P1_numPromises + 1;}} -> test3{if(n3==n) {P1_numPromises = P1_numPromises + 1;}} ->
+  if (P1_numPromises < 2) {reset_promises{P1_numPromises = 0;} -> Proposer1(n+3)} else { findmax {
+  var counter = 0;
+  var array_m = [m1, m2, m3];
+  var array_val = [v1, v2, v3];
+  while (counter < 3) {
+  if (P1_max_m < array_m[counter]) {P1_max_m = array_m[counter]; P1_max_val = array_val[counter];}
+  counter = counter + 1;
+  }} -> if (P1_max_m > -1) {
+    P1A1Accept!n.P1_max_val -> P1A2Accept!n.P1_max_val -> P1A3Accept!n.P1_max_val -> Proposer1(n+3)
+  } else {P1A1Accept!n.P1Val -> P1A2Accept!n.P1Val -> P1A3Accept!n.P1Val -> Proposer1(n+3)}};
+  
+Acceptor1() = P1A1?n -> if(n > A1_max_n) {{A1_max_n = n;} -> P1Ack!n.A1_last_m.P1Val -> P1A1Accept?curr_n.val -> Skip} else {P1Ack!n.-1.-1->Skip};
+      
+
+//// Acceptor Process
+//Acceptor(id) = 
+//    prepare?n -> Acceptor(id);
+//
+//// System Composition
+//PaxosSystem = 
+//    Proposer(1)
