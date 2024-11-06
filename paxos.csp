@@ -1,100 +1,146 @@
-// Response statuses
-#define PROMISED 0
-#define REJECTED 1
-#define ACCEPTED 2
+﻿//Messages through the Acceptor channels are of format: proposer id(1 or 2), n, proposed value(-1 if none, 10/20 if there is a value)
+channel A1 2;
+channel A2 2;
+channel A3 2;
 
-// Values that may be proposed
-#define V1 1
-#define V2 2
+//Messages through the Proposer channels are of format: n (-1 to denote NACK), m (last accepted promise, -1 to denote none), val (last accepted value). proposers dont need to know which acceptor this response came from.
+channel P1Ack 3;
+channel P2Ack 3;
 
-// Channels for communication between Proposer, Acceptor, and Learner
-// Assumption #1: All channels are perfectly reliable and synchronous.
-channel prepare 0;
-channel promise 0;
-channel propose 0;
-channel accept 0;
-channel accepted 0;
+// values that the proposers want to propose
+#define P1Val 10;
+#define P2Val 20;
 
-// Define basic process for each role in Paxos
+//Proposer 1 counter variables
+var P1_numPromises = 0;
+var P1_max_m = -1;
+var P1_max_val = -1;
 
-// Proposer Process
-Proposer(id, value) = 
-    prepare!id -> // send prepare request
-    promise?id?response -> // receive promise response from Acceptor
-    (response == PROMISED -> propose!id!value -> Proposer_Accept(id, value)
-    [] response == REJECTED -> Proposer(id, value)); // retry if promise rejected
+//Proposer 2 counter variables
+var P2_numPromises = 0;
+var P2_max_m = -1;
+var P2_max_val = -1;
 
-Proposer_Accept(id, value) =
-    accept!id!value -> // send accept request to Acceptor
-    accepted?id?acceptResult -> // receive accepted result from Acceptor
-    (acceptResult == ACCEPTED -> Proposer_Consensus(id, value)
-    [] acceptResult == REJECTED -> Proposer(id, value)); // retry if rejected
+var A1_last_n = -1; //last promise
+var A1_last_m = -1; //last accepted
+var A1_last_val =-1;
 
-Proposer_Consensus(id, value) = STOP; // consensus achieved for this proposer
+var A2_last_n = -1; //last promise
+var A2_last_m = -1; //last accepted
+var A2_last_val =-1;
 
-// Acceptor Process
-Acceptor(id, acceptedValue) = 
-    prepare?id -> // receive prepare request from Proposer
-    (acceptedValue == NONE -> promise!id!PROMISED -> Acceptor_Promise(id)
-    [] acceptedValue != NONE -> promise!id!REJECTED -> Acceptor(id, acceptedValue)); // reject if already accepted
+var A3_last_n = -1; //last promise
+var A3_last_m = -1; //last accepted
+var A3_last_val =-1;
 
-Acceptor_Promise(id) =
-    propose?id?value -> // receive propose request
-    accept!id!value -> // send accept response
-    Acceptor_Accept(id, value);
+#define consensus (A1_last_val == A2_last_val && A1_last_val != -1) || (A1_last_val == A3_last_val && A1_last_val != -1) || (A2_last_val == A3_last_val && A2_last_val != -1);
 
-Acceptor_Accept(id, value) = 
-    accepted!id!ACCEPTED -> Acceptor(id, value); // confirm accepted value
+Proposer1(n) = 
+	A1!1.n.-1 -> A2!1.n.-1 -> A3!1.n.-1 -> P1Ack?n1.m1.v1 -> P1Ack?n2.m2.v2 ->  P1Ack?n3.m3.v3 -> // Send PREPARE, receive PROMISE
+	test1{if(n1 == n) {P1_numPromises = P1_numPromises + 1;}} -> test2{if(n2==n) {P1_numPromises = P1_numPromises + 1;}} -> test3{if(n3==n) {P1_numPromises = P1_numPromises + 1;}} ->
+	if (P1_numPromises < 2) {reset_promises{P1_numPromises = 0;} -> Proposer1(n+2)} // Did not receive majority promise, retry
+	else {
+	    // Respond to majority promise
+	    // Find the latest accepted value, if any
+		findmax {
+			var counter = 0;
+			var array_m = [m1, m2, m3];
+			var array_val = [v1, v2, v3];
+			while (counter < 3) {
+				if (P1_max_m < array_m[counter]) {P1_max_m = array_m[counter]; P1_max_val = array_val[counter];}
+				counter = counter + 1;
+			}} -> if (P1_max_m > -1) {
+				// Something was accepted, send ACCEPT with the accepted value
+				A1!1.n.P1_max_val -> A2!1.n.P1_max_val -> A3!1.n.P1_max_val -> reset_P1_fields{P1_numPromises = 0; P1_max_m = -1; P1_max_val = -1;} -> Stop
+			} else {
+		        // Nothing accepted yet, send ACCEPT with our value
+				A1!1.n.P1Val -> A2!1.n.P1Val -> A3!1.n.P1Val -> reset_P1_fields{P1_numPromises = 0; P1_max_m = -1; P1_max_val = -1;} -> Stop
+			}
+	};
+  
+Proposer2(n) = 
+	A1!2.n.-1 -> A2!2.n.-1 -> A3!2.n.-1 -> P2Ack?n1.m1.v1 -> P2Ack?n2.m2.v2 ->  P2Ack?n3.m3.v3 -> // Send PREPARE, receive PROMISE
+	test1{if(n1 == n) {P2_numPromises = P2_numPromises + 1;}} -> test2{if(n2==n) {P2_numPromises = P2_numPromises + 1;}} -> test3{if(n3==n) {P2_numPromises = P2_numPromises + 1;}} ->
+	if (P2_numPromises < 2) {reset_promises{P2_numPromises = 0;} -> Proposer2(n+2)} // Did not receive majority promise, retry 
+	else {
+	    // Respond to majority PROMISE/ACCEPTED
+	    // Find the latest accepted value, if any
+		findmax {
+			var counter = 0;
+			var array_m = [m1, m2, m3];
+			var array_val = [v1, v2, v3];
+			while (counter < 3) {
+				if (P2_max_m < array_m[counter]) {P2_max_m = array_m[counter]; P2_max_val = array_val[counter];}
+				counter = counter + 1;
+			}} -> if (P2_max_m > -1) {
+				//something was accepted, send ACCEPT with the accepted value
+				A1!2.n.P2_max_val -> A2!2.n.P2_max_val -> A3!2.n.P2_max_val -> reset_P2_fields{P2_numPromises = 0; P2_max_m = -1; P2_max_val = -1;} -> Stop
+			} else {
+			    // Nothing accepted yet, send ACCEPT with our value
+				A1!2.n.P2Val -> A2!2.n.P2Val -> A3!2.n.P2Val -> reset_P2_fields{P2_numPromises = 0; P2_max_m = -1; P2_max_val = -1;} -> Stop
+			}
+	};
 
-// Learner Process
-Learner(id) =
-    accepted?id?value -> // receive accepted value
-    Learner_Consensus(id, value);
 
-Learner_Consensus(id, value) = STOP; // learner has reached consensus
+Acceptor1(last_n, last_m, last_val) = updateAllVars{A1_last_n = last_n; A1_last_m = last_m; A1_last_val = last_val;} -> A1?prop.n.val 
+	-> if (val == -1 ) {Acceptor1PromisePath(n, prop, last_n, last_m, last_val)} else {Acceptor1AcceptPath(n, prop, val, last_n, last_m, last_val)};
 
-// 1. Error-free Scenario
-|| PaxosSystem = 
-    (Proposer(1, V1) || Proposer(2, V2) || Acceptor(1, NONE) || Acceptor(2, NONE) || Learner(1) || Learner(2));
+Acceptor1PromisePath(n, prop, last_n, last_m, last_val) = if (n < last_n) {
+																//NACK
+																if (prop == 1) {P1Ack!-1.-1.-1 -> Acceptor1(last_n, last_m, last_val)} else {P2Ack!-1.-1.-1 -> Acceptor1(last_n, last_m, last_val)}
+														  } else {
+														  		if (prop == 1) {P1Ack!n.last_m.last_val -> Acceptor1(n, last_m, last_val)} else {P2Ack!n.last_m.last_val -> Acceptor1(n, last_m, last_val)}
+														  };
+														  		
 
-// 2. Acceptor Failure
-|| PaxosSystem_LearnerFailure = 
-    (Proposer(1, V1) || Proposer(2, V2) || Acceptor(1, NONE) || Acceptor(2, NONE) || Learner(1) -> STOP);
+Acceptor1AcceptPath(n, prop, val, last_n, last_m, last_val) = if (n < last_n) {
+												    	if (prop == 1) {P1Ack!-1.-1.-1 -> Acceptor1(last_n, last_m, last_val)} else {P2Ack!-1.-1.-1 -> Acceptor1(last_n, last_m, last_val)}
+												   } else {
+												   		if (prop == 1) {P1Ack!n.n.val -> Acceptor1(n, n, val)} else {P2Ack!n.n.val -> Acceptor1(n, n, val)}
+												   };
+														
 
-// 3. Redundant Learner Failure
-|| PaxosSystem_LearnerFailure = 
-    (Proposer(1, V1) || Proposer(2, V2) || Acceptor(1, NONE) || Acceptor(2, NONE) || Learner(1) -> STOP);
+Acceptor2(last_n, last_m, last_val) = updateAllVars{A2_last_n = last_n; A2_last_m = last_m; A2_last_val = last_val;} -> A2?prop.n.val 
+	-> if (val == -1 ) {Acceptor2PromisePath(n, prop, last_n, last_m, last_val)} else {Acceptor2AcceptPath(n, prop, val, last_n, last_m, last_val)};
 
-// 4. Proposer Failure
-|| PaxosSystem_ProposerFailure = 
-    ((Proposer(1, V1) -> STOP) || Proposer(2, V2) || Acceptor(1, NONE) || Acceptor(2, NONE) || Learner(1) || Learner(2));
+Acceptor2PromisePath(n, prop, last_n, last_m, last_val) = if (n < last_n) {
+																//NACK
+																if (prop == 1) {P1Ack!-1.-1.-1 -> Acceptor2(last_n, last_m, last_val)} else {P2Ack!-1.-1.-1 -> Acceptor2(last_n, last_m, last_val)}
+														  } else {
+														  		if (prop == 1) {P1Ack!n.last_m.last_val -> Acceptor2(n, last_m, last_val)} else {P2Ack!n.last_m.last_val -> Acceptor2(n, last_m, last_val)}
+														  };
+														  		
 
-// 5. Conflicting Proposers
-|| PaxosSystem_ConflictingProposers = 
-    (Proposer(1, V1) || Proposer(2, V2) || Acceptor(1, NONE) || Acceptor(2, NONE) || Learner(1) || Learner(2));
+Acceptor2AcceptPath(n, prop, val, last_n, last_m, last_val) = if (n < last_n) {
+												    	if (prop == 1) {P1Ack!-1.-1.-1 -> Acceptor2(last_n, last_m, last_val)} else {P2Ack!-1.-1.-1 -> Acceptor2(last_n, last_m, last_val)}
+												   } else {
+												   		if (prop == 1) {P1Ack!n.n.val -> Acceptor2(n, n, val)} else {P2Ack!n.n.val -> Acceptor2(n, n, val)}
+												   };
 
-// 6. Acceptor Accepting Two Different Values
-Acceptor_Conflict(id, acceptedValue) = 
-    prepare?id -> promise!id!PROMISED -> propose?id?value -> 
-    accept!id!value -> accepted!id!ACCEPTED -> // accept first value
-    propose?id?newValue -> // receive another propose with different value
-    accept!id!newValue -> accepted!id!ACCEPTED; // wrongly accept second value
+Acceptor3(last_n, last_m, last_val) = updateAllVars{A3_last_n = last_n; A3_last_m = last_m; A3_last_val = last_val;} -> A3?prop.n.val 
+	-> if (val == -1 ) {Acceptor3PromisePath(n, prop, last_n, last_m, last_val)} else {Acceptor3AcceptPath(n, prop, val, last_n, last_m, last_val)};
 
-|| PaxosSystem_AcceptorConflict = 
-    (Proposer(1, V1) || Proposer(2, V2) || Acceptor_Conflict(1, NONE) || Acceptor(2, NONE) || Learner(1) || Learner(2));
+Acceptor3PromisePath(n, prop, last_n, last_m, last_val) = if (n < last_n) {
+																//NACK
+																if (prop == 1) {P1Ack!-1.-1.-1 -> Acceptor3(last_n, last_m, last_val)} else {P2Ack!-1.-1.-1 -> Acceptor3(last_n, last_m, last_val)}
+														  } else {
+														  		if (prop == 1) {P1Ack!n.last_m.last_val -> Acceptor3(n, last_m, last_val)} else {P2Ack!n.last_m.last_val -> Acceptor3(n, last_m, last_val)}
+														  };
+														  		
 
-// 7. Insufficient Multi-identifier Majority
-Acceptor_RejectAll(id) = 
-    prepare?id -> promise!id!REJECTED -> Acceptor_RejectAll(id);
+Acceptor3AcceptPath(n, prop, val, last_n, last_m, last_val) = if (n < last_n) {
+												    	if (prop == 1) {P1Ack!-1.-1.-1 -> Acceptor3(last_n, last_m, last_val)} else {P2Ack!-1.-1.-1 -> Acceptor3(last_n, last_m, last_val)}
+												   } else {
+												   		if (prop == 1) {P1Ack!n.n.val -> Acceptor3(n, n, val)} else {P2Ack!n.n.val -> Acceptor3(n, n, val)}
+												   };
 
-|| PaxosSystem_InsufficientMajority = 
-    (Proposer(1, V1) || Proposer(2, V2) || Acceptor_RejectAll(1) || Acceptor(2, NONE) || Learner(1) || Learner(2));
 
-// 8. New Proposers Unable to Change Existing consensus
-|| PaxosSystem_StableConsensus = 
-    (Proposer(1, V1) || Proposer(2, V2) || Acceptor(1, V1) || Acceptor(2, V1) || Learner(1) || Learner(2));
+System() = Proposer1(1) ||| Proposer2(2) ||| Acceptor1(-1, -1, -1) ||| Acceptor2(-1, -1, -1) ||| Acceptor3(-1, -1, -1);
 
-// Assertions
-assert PaxosSystem deadlockfree;
-assert PaxosSystem reaches (Learner_Consensus(1, V1) and Learner_Consensus(2, V1));
+#assert System() deadlockfree;
+
+// Basic Paxos, error-free scenario
+#assert System() reaches consensus; // system can achieve consensus
+
+
 
