@@ -41,8 +41,18 @@ var A3_last_val =-1;
 var L1_val = -1;
 var L2_val = -1;
 
+//The consensus case, where at least 2 of the 3 acceptors must agree on the same value. The value cannot be -1 since that is the flag to denote the absence of a value.
 #define consensus (A1_last_val == A2_last_val && A1_last_val != -1) || (A1_last_val == A3_last_val && A1_last_val != -1) || (A2_last_val == A3_last_val && A2_last_val != -1);
 
+
+//BASIC PAXOS IN ERROR FREE SCENARIO
+
+//For the basic scenario, there is one proposer who tries to propose a value to 3 acceptors. Eventually, we just have to check if the consensus is reached where at least 2 of the 3 acceptors share a common value.
+//The proposer and 3 acceptors are running in an interleaving pattern.
+//The proposer can choose to either send a PREPARE or a ACCEPT request, in the event that the proposer has received a majority promise.
+//The acceptor must decide if the request it receives is a PREPARE or ACCEPT request, and then send either a NACK(in the event the promise is smaller than its previous promsie), or a PROMISE.
+
+//First proposer
 Proposer1(n) = 
 	A1!1.n.-1 -> A2!1.n.-1 -> A3!1.n.-1 -> P1Ack?n1.m1.v1 -> P1Ack?n2.m2.v2 ->  P1Ack?n3.m3.v3 -> // Send PREPARE, receive PROMISE
 	test1{if(n1 == n) {P1_numPromises = P1_numPromises + 1;}} -> test2{if(n2==n) {P1_numPromises = P1_numPromises + 1;}} -> test3{if(n3==n) {P1_numPromises = P1_numPromises + 1;}} ->
@@ -65,7 +75,9 @@ Proposer1(n) =
 				A1!1.n.P1Val -> A2!1.n.P1Val -> A3!1.n.P1Val -> reset_P1_fields{P1_numPromises = 0; P1_max_m = -1; P1_max_val = -1;} -> Stop
 			}
 	};
-  
+
+
+//Second proposer
 Proposer2(n) = 
 	A1!2.n.-1 -> A2!2.n.-1 -> A3!2.n.-1 -> P2Ack?n1.m1.v1 -> P2Ack?n2.m2.v2 ->  P2Ack?n3.m3.v3 -> // Send PREPARE, receive PROMISE
 	test1{if(n1 == n) {P2_numPromises = P2_numPromises + 1;}} -> test2{if(n2==n) {P2_numPromises = P2_numPromises + 1;}} -> test3{if(n3==n) {P2_numPromises = P2_numPromises + 1;}} ->
@@ -91,6 +103,7 @@ Proposer2(n) =
 
 
 Acceptor1(last_n, last_m, last_val) = updateAllVars{A1_last_n = last_n; A1_last_m = last_m; A1_last_val = last_val;} -> A1?prop.n.val 
+//The acceptor needs to decide if the request it is hearing is a PREPARE or a ACCEPT request.
 	-> if (val == -1 ) {Acceptor1PromisePath(n, prop, last_n, last_m, last_val)} else {Acceptor1AcceptPath(n, prop, val, last_n, last_m, last_val)};
 
 Acceptor1PromisePath(n, prop, last_n, last_m, last_val) = if (n < last_n) {
@@ -109,6 +122,7 @@ Acceptor1AcceptPath(n, prop, val, last_n, last_m, last_val) = if (n < last_n) {
 														
 
 Acceptor2(last_n, last_m, last_val) = updateAllVars{A2_last_n = last_n; A2_last_m = last_m; A2_last_val = last_val;} -> A2?prop.n.val 
+//The acceptor needs to decide if the request it is hearing is a PREPARE or a ACCEPT request.
 	-> if (val == -1 ) {Acceptor2PromisePath(n, prop, last_n, last_m, last_val)} else {Acceptor2AcceptPath(n, prop, val, last_n, last_m, last_val)};
 
 Acceptor2PromisePath(n, prop, last_n, last_m, last_val) = if (n < last_n) {
@@ -126,6 +140,7 @@ Acceptor2AcceptPath(n, prop, val, last_n, last_m, last_val) = if (n < last_n) {
 												   };
 
 Acceptor3(last_n, last_m, last_val) = updateAllVars{A3_last_n = last_n; A3_last_m = last_m; A3_last_val = last_val;} -> A3?prop.n.val 
+//The acceptor needs to decide if the request it is hearing is a PREPARE or a ACCEPT request.
 	-> if (val == -1 ) {Acceptor3PromisePath(n, prop, last_n, last_m, last_val)} else {Acceptor3AcceptPath(n, prop, val, last_n, last_m, last_val)};
 
 Acceptor3PromisePath(n, prop, last_n, last_m, last_val) = if (n < last_n) {
@@ -156,18 +171,33 @@ System() = Proposer1(1) ||| Acceptor1(-1, -1, -1) ||| Acceptor2(-1, -1, -1) ||| 
 #assert System() |= <> consensus; // expect VALID
 
 
+/////////////////////////////////////////////////
+////////////ERROR SCENARIOS/////////////////////
+////////////////////////////////////////////////
+
+
+
+//SCENARIO 1: BASIC PAXOS WITH ACCEPTOR FAILURE
+//one of the acceptor will fail, so there will only be 2 acceptors. Consensus should still be reached with the new quorum size of 2.
+
+
 // 1. Acceptor Failure
 FailedAcceptor(last_n, last_m, last_val) = A3?prop.n.val -> if (n == 1) { P1Ack!-1.-1.-1 -> Skip } else { P2Ack!-1.-1.-1 -> Skip }; // Simulate a failed acceptor
 System_AcceptorFailure() = Proposer1(1) ||| Acceptor1(-1, -1, -1) ||| Acceptor2(-1, -1, -1) ||| FailedAcceptor(-1, -1, -1);
 #assert System_AcceptorFailure() |= <> consensus; // expect VALID
 
 
+
+//SCENARIO 2: BASIC PAXOS WITH REDUNDANT LEARNER FAILURE
+//One of the learners will fail, which should not prevent the the acceptors from achieving consensus. 
+
 // 2. Redundant Learner Failure
 FailedLearner() = Stop; // simulate a failed learner
 System_RedundantLearnerFailure() = Proposer1(1) ||| Acceptor1(-1, -1, -1) ||| Acceptor2(-1, -1, -1) ||| Acceptor3(-1, -1, -1) ||| Learner1() ||| FailedLearner();
 #assert System_RedundantLearnerFailure() |= <> consensus; // expect VALID
 
-
+//SCENARIO 3: BASIC PAXOS WHEN A PROPOSER FAILS
+//One of the proposers will fail during the middle of an ACCEPT message, so only one acceptor receives the accept request. A new leader is elected(proposer 2) which will then propose a new value, and consensus is reached.
 // 3. Proposer Failure
 FailedProposer(n) = 
 	A1!1.n.-1 -> A2!1.n.-1 -> A3!1.n.-1 -> P1Ack?n1.m1.v1 -> P1Ack?n2.m2.v2 ->  P1Ack?n3.m3.v3 -> // Send PREPARE, receive PROMISE
@@ -198,6 +228,9 @@ System_ProposerFailure() = FailedProposer(1) ||| Acceptor1(-1, -1, -1) ||| Accep
 #assert System_ProposerFailure |= <> proposerFailure_consensus; // expect VALID
 
 
+
+////SCENARIO 4: BASIC PAXOS WHEN MULTIPLE PROPOSERS CONFLICT
+// In this scenario, 2 proposers will repeatedly send PREPARE with higher promises, which causes the other proposer's next request to be ignored. In this scenrio, consensus MAY NOT BE REACHED
 // 4. Conflicting Proposers
 var P1Nack = 0;
 var P2Nack = 0;
@@ -262,6 +295,8 @@ System_ConflictingProposers() = ConflictingProposer1Part2(1) ||| ConflictingProp
 #assert System_ConflictingProposers() reaches nack_level_4; 
 
 
+////SCENARIO 5: BASIC PAXOS WITH ACCEPTOR ACCEPTING 2 DIFFERENT VALUES
+// One propose only sends ACCEPT to one of the acceptors. The other proposer sends ACCEPT to the other 2 acceptors, achieveing consensus. 
 // 5. Acceptor Accepting Two Different Values
 System_AcceptorTwoValues() = FailedProposer(1) ||| Proposer2(2) ||| Acceptor1(-1, -1, -1) ||| Acceptor2(-1, -1, -1) ||| Acceptor3(-1, -1, -1) ||| Learner1() ||| Learner2();
 // We want the consensus to have the value of the surviving proposer that proposes its value after the first proposer fails.
@@ -269,8 +304,16 @@ System_AcceptorTwoValues() = FailedProposer(1) ||| Proposer2(2) ||| Acceptor1(-1
 #assert System_AcceptorTwoValues() reaches acceptorTwoValues_consensus; // expect VALID
 
 
-// 6. Insufficient Multi-Identifier Majority
-// TODO
+// SCENARIO 6: BASIC PAXOS WITH INSUFFICIENT MULTI-IDENTIFIER MAJORITY
+// Proposer 1 achieves acceptance of a value, before failing. Proposer 2 achives the acceptance of a second value, before failing. Proposer 3 finds one acceptor that has previously accepted V1, and therefore has to propose V1.
+// Proposer 3 manages to get 2 acceptors to accept this value before failing. However, the acceptors that accepted this value did not accept V1 with the same identifier. 
+// Finally, proposer 4 parepares the quorum that has not seen the highest identifier. The consensus is reached.
+// 6. Insufficient multi-identifier majority
+
+
+//SCENARIO 7: BASIC PAXOS WHERE NEW PROPOSERS CANNOT CHANGE AN EXISTING CONSENSUS
+// A new proposer when entering is unable to prepare a majority that does not include at least one acceptor which has previously accepted a value. It is therefore forced to propose the same value.
+// Consensus shoudl be reached.
 
 // 7. New Proposers Unable to Change Existing Consensus
 // TODO
