@@ -147,25 +147,25 @@ Learner1() = L1?val -> update_val{L1_val = val} -> Stop;
 Learner2()= L2?val -> update_val{L2_val = val} -> Stop;											   
 
 
-System() = Proposer1(1) ||| Proposer2(2) ||| Acceptor1(-1, -1, -1) ||| Acceptor2(-1, -1, -1) ||| Acceptor3(-1, -1, -1) ||| Learner1() ||| Learner2();
+System() = Proposer1(1) ||| Acceptor1(-1, -1, -1) ||| Acceptor2(-1, -1, -1) ||| Acceptor3(-1, -1, -1) ||| Learner1() ||| Learner2();
 
 #assert System() deadlockfree;
 
 
 // Basic Paxos, error-free scenario
-#assert System() reaches consensus; // expect VALID
+#assert System() |= <> consensus; // expect VALID
 
 
 // 1. Acceptor Failure
 FailedAcceptor(last_n, last_m, last_val) = A3?prop.n.val -> if (n == 1) { P1Ack!-1.-1.-1 -> Skip } else { P2Ack!-1.-1.-1 -> Skip }; // Simulate a failed acceptor
-System_AcceptorFailure() = Proposer1(1) ||| Proposer2(2) ||| Acceptor1(-1, -1, -1) ||| Acceptor2(-1, -1, -1) ||| FailedAcceptor(-1, -1, -1);
-#assert System_AcceptorFailure() reaches consensus; // expect VALID
+System_AcceptorFailure() = Proposer1(1) ||| Acceptor1(-1, -1, -1) ||| Acceptor2(-1, -1, -1) ||| FailedAcceptor(-1, -1, -1);
+#assert System_AcceptorFailure() |= <> consensus; // expect VALID
 
 
 // 2. Redundant Learner Failure
 FailedLearner() = Stop; // simulate a failed learner
-System_RedundantLearnerFailure() = Proposer1(1) ||| Proposer2(2) ||| Acceptor1(-1, -1, -1) ||| Acceptor2(-1, -1, -1) ||| Acceptor3(-1, -1, -1) ||| Learner1() ||| FailedLearner();
-#assert System_RedundantLearnerFailure() reaches consensus; // expect VALID
+System_RedundantLearnerFailure() = Proposer1(1) ||| Acceptor1(-1, -1, -1) ||| Acceptor2(-1, -1, -1) ||| Acceptor3(-1, -1, -1) ||| Learner1() ||| FailedLearner();
+#assert System_RedundantLearnerFailure() |= <> consensus; // expect VALID
 
 
 // 3. Proposer Failure
@@ -184,25 +184,32 @@ FailedProposer(n) =
 				if (P1_max_m < array_m[counter]) {P1_max_m = array_m[counter]; P1_max_val = array_val[counter];}
 				counter = counter + 1;
 			}} -> if (P1_max_m > -1) {
-				// Fail in the middle of sending ACCEPT
-				A1!1.n.P1_max_val -> Stop
+				// Fail in the middle of sending ACCEPT, initiate new leader
+				A1!1.n.P1_max_val -> Proposer2(2)
 			} else {
-		        // Fail in the middle of sending ACCEPT
-				A1!1.n.P1Val -> Stop
+		        // Fail in the middle of sending ACCEPT, initiate new leader
+				A1!1.n.P1Val -> Proposer2(2)
 			}
 	};
 	
-System_ProposerFailure() = FailedProposer(1) ||| Proposer2(2) ||| Acceptor1(-1, -1, -1) ||| Acceptor2(-1, -1, -1) ||| Acceptor3(-1, -1, -1) ||| Learner1() ||| Learner2();
+System_ProposerFailure() = FailedProposer(1) ||| Acceptor1(-1, -1, -1) ||| Acceptor2(-1, -1, -1) ||| Acceptor3(-1, -1, -1) ||| Learner1() ||| Learner2();
 // We want the consensus to be the failed proposer's value that is accepted by all
 #define proposerFailure_consensus (A1_last_val == A2_last_val && A1_last_val == P1Val) || (A1_last_val == A3_last_val && A1_last_val == P1Val) || (A2_last_val == A3_last_val && A2_last_val == P1Val);
-#assert System_ProposerFailure reaches proposerFailure_consensus; // expect VALID
+#assert System_ProposerFailure |= <> proposerFailure_consensus; // expect VALID
 
 
 // 4. Conflicting Proposers
-ConflictingProposer1(n) = 
+var P1Nack = 0;
+var P2Nack = 0;
+
+ConflictingProposer1Part1(n) = 
+	A1!1.n.-1 -> A2!1.n.-1 -> A3!1.n.-1 -> P1Ack?n1.m1.v1 -> P1Ack?n2.m2.v2 ->  P1Ack?n3.m3.v3 -> (ConflictingProposer2(2) ||| ConflictingProposer1Part2(2)); // Dies after receiving promise, then spawns leader new proposer and revives
+	
+ConflictingProposer1Part2(n) = 
 	A1!1.n.-1 -> A2!1.n.-1 -> A3!1.n.-1 -> P1Ack?n1.m1.v1 -> P1Ack?n2.m2.v2 ->  P1Ack?n3.m3.v3 -> // Send PREPARE, receive PROMISE
 	test1{if(n1 == n) {P1_numPromises = P1_numPromises + 1;}} -> test2{if(n2==n) {P1_numPromises = P1_numPromises + 1;}} -> test3{if(n3==n) {P1_numPromises = P1_numPromises + 1;}} ->
-	if (P1_numPromises < 2) {reset_promises{P1_numPromises = 0;} -> ConflictingProposer2(n+2)} // Did not receive majority promise, retry
+	updateNack{if (n1 == -1 || n2 == -1 || n3 == -1) {P1Nack = n;}}  -> 
+	if (P1_numPromises < 2) {reset_promises{P1_numPromises = 0;} -> ConflictingProposer1Part2(n+2)} // Did not receive majority promise, retry
 	else {
 	    // Respond to majority promise
 	    // Find the latest accepted value, if any
@@ -214,7 +221,7 @@ ConflictingProposer1(n) =
 				if (P1_max_m < array_m[counter]) {P1_max_m = array_m[counter]; P1_max_val = array_val[counter];}
 				counter = counter + 1;
 			}
-		} -> tau -> // simulate a failure here
+		} -> // simulate a failure here
 			if (P1_max_m > -1) {
 				// Something was accepted, send ACCEPT with the accepted value
 				A1!1.n.P1_max_val -> A2!1.n.P1_max_val -> A3!1.n.P1_max_val -> reset_P1_fields{P1_numPromises = 0; P1_max_m = -1; P1_max_val = -1;} -> L1!P1_max_val -> L2!P1_max_val -> Stop
@@ -227,6 +234,7 @@ ConflictingProposer1(n) =
 ConflictingProposer2(n) = 
 	A1!2.n.-1 -> A2!2.n.-1 -> A3!2.n.-1 -> P2Ack?n1.m1.v1 -> P2Ack?n2.m2.v2 ->  P2Ack?n3.m3.v3 -> // Send PREPARE, receive PROMISE
 	test1{if(n1 == n) {P2_numPromises = P2_numPromises + 1;}} -> test2{if(n2==n) {P2_numPromises = P2_numPromises + 1;}} -> test3{if(n3==n) {P2_numPromises = P2_numPromises + 1;}} ->
+	updateNack{if (n1 == -1 || n2 == -1 || n3 == -1) {P2Nack = n;}}  -> 
 	if (P2_numPromises < 2) {reset_promises{P2_numPromises = 0;} -> ConflictingProposer2(n+2)} // Did not receive majority promise, retry 
 	else {
 	    // Respond to majority PROMISE/ACCEPTED
@@ -239,8 +247,7 @@ ConflictingProposer2(n) =
 				if (P2_max_m < array_m[counter]) {P2_max_m = array_m[counter]; P2_max_val = array_val[counter];}
 				counter = counter + 1;
 			}
-		} -> tau -> // simulate a failure here
-			if (P2_max_m > -1) {
+		} -> if (P2_max_m > -1) {
 				//something was accepted, send ACCEPT with the accepted value
 				A1!2.n.P2_max_val -> A2!2.n.P2_max_val -> A3!2.n.P2_max_val -> reset_P2_fields{P2_numPromises = 0; P2_max_m = -1; P2_max_val = -1;} -> L1!P2_max_val -> L2!P2_max_val -> Stop
 			} else {
@@ -249,8 +256,10 @@ ConflictingProposer2(n) =
 			}
 	};
 	
-System_ConflictingProposers() = ConflictingProposer1(1) ||| ConflictingProposer2(2) ||| Acceptor1(-1, -1, -1) ||| Acceptor2(-1, -1, -1) ||| Acceptor3(-1, -1, -1) ||| Learner1() ||| Learner2();
+System_ConflictingProposers() = ConflictingProposer1Part2(1) ||| ConflictingProposer2(2) ||| Acceptor1(-1, -1, -1) ||| Acceptor2(-1, -1, -1) ||| Acceptor3(-1, -1, -1) ||| Learner1() ||| Learner2();
+#define nack_level_4 (P1Nack >= 4 || P2Nack >= 4);
 #assert System_ConflictingProposers() |= <> consensus; // expect NOT VALID
+#assert System_ConflictingProposers() reaches nack_level_4; 
 
 
 // 5. Acceptor Accepting Two Different Values
