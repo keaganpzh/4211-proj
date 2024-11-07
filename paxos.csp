@@ -169,7 +169,7 @@ System() = Proposer1(1) ||| Acceptor1(-1, -1, -1) ||| Acceptor2(-1, -1, -1) ||| 
 
 #assert System() deadlockfree;
 
-
+#assert System() reaches consensus;   //example trace
 // Basic Paxos, error-free scenario
 #assert System() |= <> consensus; // expect VALID
 
@@ -187,6 +187,8 @@ System() = Proposer1(1) ||| Acceptor1(-1, -1, -1) ||| Acceptor2(-1, -1, -1) ||| 
 // 1. Acceptor Failure
 FailedAcceptor(last_n, last_m, last_val) = A3?prop.n.val -> if (n == 1) { P1Ack!-1.-1.-1 -> Skip } else { P2Ack!-1.-1.-1 -> Skip }; // Simulate a failed acceptor
 System_AcceptorFailure() = Proposer1(1) ||| Acceptor1(-1, -1, -1) ||| Acceptor2(-1, -1, -1) ||| FailedAcceptor(-1, -1, -1);
+
+#assert System_AcceptorFailure() reaches consensus;
 #assert System_AcceptorFailure() |= <> consensus; // expect VALID
 
 
@@ -197,6 +199,8 @@ System_AcceptorFailure() = Proposer1(1) ||| Acceptor1(-1, -1, -1) ||| Acceptor2(
 // 2. Redundant Learner Failure
 FailedLearner() = Stop; // simulate a failed learner
 System_RedundantLearnerFailure() = Proposer1(1) ||| Acceptor1(-1, -1, -1) ||| Acceptor2(-1, -1, -1) ||| Acceptor3(-1, -1, -1) ||| Learner1() ||| FailedLearner();
+
+#assert System_RedundantLearnerFailure() reaches consensus;
 #assert System_RedundantLearnerFailure() |= <> consensus; // expect VALID
 
 
@@ -231,6 +235,8 @@ FailedProposer(n) =
 System_ProposerFailure() = FailedProposer(1) ||| Acceptor1(-1, -1, -1) ||| Acceptor2(-1, -1, -1) ||| Acceptor3(-1, -1, -1) ||| Learner1() ||| Learner2();
 // We want the consensus to be the failed proposer's value that is accepted by all
 #define proposerFailure_consensus (A1_last_val == A2_last_val && A1_last_val == P1Val) || (A1_last_val == A3_last_val && A1_last_val == P1Val) || (A2_last_val == A3_last_val && A2_last_val == P1Val);
+
+#assert System_ProposerFailure reaches proposerFailure_consensus;
 #assert System_ProposerFailure |= <> proposerFailure_consensus; // expect VALID
 
 
@@ -292,8 +298,10 @@ ConflictingProposer2(n) =
 	
 System_ConflictingProposers() = ConflictingProposer1Part1(1) ||| Acceptor1(-1, -1, -1) ||| Acceptor2(-1, -1, -1) ||| Acceptor3(-1, -1, -1) ||| Learner1() ||| Learner2();
 #define nack_level_4 (P1Nack >= 2 || P2Nack >= 2);
-#assert System_ConflictingProposers() |= <> consensus; // expect NOT VALID
-#assert System_ConflictingProposers() reaches nack_level_4;
+
+//This is a simplification - if the nack reaches 4 it means that the proposers are constantly overriding each other with higher identification. 
+//Clarified with prof, this is sufficient to prove this works - 07/11/2024 ~10.58 a.m
+#assert System_ConflictingProposers() reaches nack_level_4;  //EXPECT VALID
 
 
 
@@ -350,6 +358,8 @@ SemiFailedProposer2(n) =
 System_AcceptorTwoValues() = SemiFailedProposer1(1) ||| Acceptor1(-1, -1, -1) ||| Acceptor2(-1, -1, -1) ||| Acceptor3(-1, -1, -1) ||| Learner1() ||| Learner2();
 // We want the consensus to have the value of the surviving proposer that proposes its value after the first proposer fails.
 #define acceptorTwoValues_consensus (A1_last_val == A2_last_val && A1_last_val == P2Val) || (A1_last_val == A3_last_val && A1_last_val == P2Val) || (A2_last_val == A3_last_val && A2_last_val == P2Val);
+
+#assert System_AcceptorTwoValues() reaches acceptorTwoValues_consensus;
 #assert System_AcceptorTwoValues() |= <> acceptorTwoValues_consensus;
 
 
@@ -391,4 +401,85 @@ NewProposer1(n) =
 System_NewProposersCannotChangeConsensus() = NewProposer1(1) ||| Acceptor1(-1, -1, -1) ||| Acceptor2(-1, -1, -1) ||| Acceptor3(-1, -1, -1) ||| Learner1() ||| Learner2();
 // We want the consensus to have the value of the surviving proposer that proposes its value after the first proposer fails.
 #define newProposersCannotChangeConsensus_consensus (A1_last_val == A2_last_val && A1_last_val == P1Val) || (A1_last_val == A3_last_val && A1_last_val == P1Val) || (A2_last_val == A3_last_val && A2_last_val == P1Val);
+
+#assert System_NewProposersCannotChangeConsensus() reaches newProposersCannotChangeConsensus_consensus;
 #assert System_NewProposersCannotChangeConsensus() |= <> newProposersCannotChangeConsensus_consensus;
+
+
+
+
+///////////////////////////////////
+//////Example traces below////////
+/////////////////////////////////
+
+
+
+//Error-free:
+//<init -> updateAllVars -> updateAllVars -> updateAllVars -> A1!1.1.-1 -> A1?1.1.-1 -> [if((-1 == -(1)))] -> [if!((1 < -1))] -> [if((1 == 1))] -> P1Ack!1.-1.-1 
+//-> updateAllVars -> A2!1.1.-1 -> A2?1.1.-1 -> [if((-1 == -(1)))] -> [if!((1 < -1))] -> L1!-1 -> L1?-1 -> update_val -> L2!-1 -> L2?-1 -> update_val -> [if((1 == 1))] -> P1Ack!1.-1.-1 
+//-> updateAllVars -> A3!1.1.-1 -> A3?1.1.-1 -> [if((-1 == -(1)))] -> [if!((1 < -1))] -> [if((1 == 1))] -> P1Ack!1.-1.-1 -> updateAllVars -> P1Ack?1.-1.-1 -> P1Ack?1.-1.-1 -> P1Ack?1.-1.-1 
+//-> test1 -> test2 -> test3 -> [if!((P1_numPromises < 2))] -> findmax -> [if!((P1_max_m > -(1)))] -> A1!1.1.P1Val -> A1?1.1.P1Val -> [if!((P1Val == -(1)))] -> [if!((1 < 1))] -> L1!-1 
+//-> L1?-1 -> update_val -> L2!-1 -> L2?-1 -> update_val -> [if((1 == 1))] -> P1Ack!1.1.P1Val -> updateAllVars -> A2!1.1.P1Val -> A2?1.1.P1Val -> [if!((P1Val == -(1)))]
+// -> [if!((1 < 1))] -> [if((1 == 1))] -> P1Ack!1.1.P1Val -> updateAllVars>
+
+
+//Error 1:
+//<init -> updateAllVars -> updateAllVars -> A1!1.1.-1 -> A1?1.1.-1 -> [if((-1 == -(1)))] -> [if!((1 < -1))] -> [if((1 == 1))] -> P1Ack!1.-1.-1 -> updateAllVars -> A2!1.1.-1 -> A2?1.1.-1 
+//-> [if((-1 == -(1)))] -> [if!((1 < -1))] -> L1!-1 -> L2!-1 -> [if((1 == 1))] -> P1Ack!1.-1.-1 -> updateAllVars -> A3!1.1.-1 -> A3?1.1.-1 -> [if((1 == 1))] -> P1Ack!-1.-1.-1 
+//-> P1Ack?1.-1.-1 -> P1Ack?1.-1.-1 -> P1Ack?-1.-1.-1 -> test1 -> test2 -> test3 -> [if!((P1_numPromises < 2))] -> findmax -> [if!((P1_max_m > -(1)))] -> A1!1.1.P1Val 
+//-> A1?1.1.P1Val -> [if!((P1Val == -(1)))] -> [if!((1 < 1))] -> L1!-1 -> L2!-1 -> [if((1 == 1))] -> P1Ack!1.1.P1Val -> updateAllVars -> A2!1.1.P1Val -> A2?1.1.P1Val 
+//-> [if!((P1Val == -(1)))] -> [if!((1 < 1))] -> [if((1 == 1))] -> P1Ack!1.1.P1Val -> updateAllVars>
+
+
+//Error 2:
+//<init -> updateAllVars -> updateAllVars -> updateAllVars -> A1!1.1.-1 -> A1?1.1.-1 -> [if((-1 == -(1)))] -> [if!((1 < -1))] -> [if((1 == 1))] -> P1Ack!1.-1.-1 -> updateAllVars 
+//-> A2!1.1.-1 -> A2?1.1.-1 -> [if((-1 == -(1)))] -> [if!((1 < -1))] -> L1!-1 -> L1?-1 -> update_val -> L2!-1 -> [if((1 == 1))] -> P1Ack!1.-1.-1 -> updateAllVars -> A3!1.1.-1 -> A3?1.1.-1 
+//-> [if((-1 == -(1)))] -> [if!((1 < -1))] -> [if((1 == 1))] -> P1Ack!1.-1.-1 -> updateAllVars -> P1Ack?1.-1.-1 -> P1Ack?1.-1.-1 -> P1Ack?1.-1.-1 -> test1 -> test2 -> test3 
+//-> [if!((P1_numPromises < 2))] -> findmax -> [if!((P1_max_m > -(1)))] -> A1!1.1.P1Val -> A1?1.1.P1Val -> [if!((P1Val == -(1)))] -> [if!((1 < 1))] -> L1!-1 -> L1?-1 -> update_val -> L2!-1 
+//-> [if((1 == 1))] -> P1Ack!1.1.P1Val -> updateAllVars -> A2!1.1.P1Val -> A2?1.1.P1Val -> [if!((P1Val == -(1)))] -> [if!((1 < 1))] -> [if((1 == 1))] -> P1Ack!1.1.P1Val -> updateAllVars>
+
+
+//Error 3:
+//<init -> updateAllVars -> updateAllVars -> updateAllVars -> A1!1.1.-1 -> A1?1.1.-1 -> [if((-1 == -(1)))] -> [if!((1 < -1))] -> [if((1 == 1))] -> P1Ack!1.-1.-1 -> updateAllVars -> A2!1.1.-1 
+//-> A2?1.1.-1 -> [if((-1 == -(1)))] -> [if!((1 < -1))] -> L1!-1 -> L1?-1 -> update_val -> L2!-1 -> L2?-1 -> update_val -> [if((1 == 1))] -> P1Ack!1.-1.-1 
+//-> updateAllVars -> A3!1.1.-1 -> A3?1.1.-1 -> [if((-1 == -(1)))] -> [if!((1 < -1))] -> [if((1 == 1))] -> P1Ack!1.-1.-1 -> updateAllVars -> P1Ack?1.-1.-1 -> P1Ack?1.-1.-1 
+//-> P1Ack?1.-1.-1 -> test1 -> test2 -> test3 -> [if!((P1_numPromises < 2))] -> findmax -> [if!((P1_max_m > -(1)))] -> A1!1.1.P1Val -> A1?1.1.P1Val -> [if!((P1Val == -(1)))] 
+//-> [if!((1 < 1))] -> L1!-1 -> L1?-1 -> update_val -> L2!-1 -> L2?-1 -> update_val -> [if((1 == 1))] -> P1Ack!1.1.P1Val -> updateAllVars -> A1!2.2.-1 -> A1?2.2.-1 
+//-> [if((-1 == -(1)))] -> [if!((2 < 1))] -> [if!((2 == 1))] -> P2Ack!2.1.P1Val -> updateAllVars -> A2!2.2.-1 -> A2?2.2.-1 -> [if((-1 == -(1)))] -> [if!((2 < 1))] -> L1!-1 
+//-> L1?-1 -> update_val -> L2!-1 -> L2?-1 -> update_val -> [if!((2 == 1))] -> P2Ack!2.-1.-1 -> updateAllVars -> A3!2.2.-1 -> A3?2.2.-1 -> [if((-1 == -(1)))] -> [if!((2 < 1))] 
+//-> [if!((2 == 1))] -> P2Ack!2.-1.-1 -> updateAllVars -> P2Ack?2.1.P1Val -> P2Ack?2.-1.-1 -> P2Ack?2.-1.-1 -> test1 -> test2 -> test3 -> [if!((P2_numPromises < 2))] -> findmax 
+//-> [if((P2_max_m > -(1)))] -> A1!2.2.P1Val -> A1?2.2.P1Val -> [if!((P1Val == -(1)))] -> [if!((2 < 2))] -> L1!-1 -> L1?-1 -> update_val -> L2!-1 -> L2?-1 -> update_val 
+//-> [if!((2 == 1))] -> P2Ack!2.2.P1Val -> updateAllVars -> A2!2.2.P1Val -> A2?2.2.P1Val -> [if!((P1Val == -(1)))] -> [if!((2 < 2))] -> [if!((2 == 1))] -> P2Ack!2.2.P1Val -> updateAllVars>
+
+//Error 4:
+//<init -> updateAllVars -> updateAllVars -> updateAllVars -> A1!2.2.-1 -> A1?2.2.-1 -> [if((-1 == -(1)))] -> [if!((2 < -1))] -> [if!((2 == 1))] -> P2Ack!2.-1.-1 
+//-> updateAllVars -> A2!2.2.-1 -> A2?2.2.-1 -> [if((-1 == -(1)))] -> [if!((2 < -1))] -> L1!-1 -> L1?-1 -> update_val -> L2!-1 -> L2?-1 -> update_val -> [if!((2 == 1))] 
+//-> P2Ack!2.-1.-1 -> updateAllVars -> A3!2.2.-1 -> A3?2.2.-1 -> [if((-1 == -(1)))] -> [if!((2 < -1))] -> [if!((2 == 1))] -> P2Ack!2.-1.-1 -> updateAllVars -> sync 
+//-> P2Ack?2.-1.-1 -> P2Ack?2.-1.-1 -> P2Ack?2.-1.-1 -> test1 -> test2 -> test3 -> [if!((P2_numPromises < 2))] -> findmax -> [if!((P2_max_m > -(1)))] -> A1!2.2.P2Val 
+//-> A1?2.2.P2Val -> [if!((P2Val == -(1)))] -> [if!((2 < 2))] -> L1!-1 -> L1?-1 -> update_val -> L2!-1 -> L2?-1 -> update_val -> [if!((2 == 1))] -> P2Ack!2.2.P2Val 
+//-> updateAllVars -> A2!2.2.P2Val -> A2?2.2.P2Val -> [if!((P2Val == -(1)))] -> [if!((2 < 2))] -> [if!((2 == 1))] -> P2Ack!2.2.P2Val -> updateAllVars -> A3!2.2.P2Val 
+//-> A3?2.2.P2Val -> [if!((P2Val == -(1)))] -> [if!((2 < 2))] -> L1!-1 -> L1?-1 -> update_val -> L2!-1 -> L2?-1 -> update_val -> [if!((2 == 1))] -> P2Ack!2.2.P2Val 
+//-> updateAllVars -> reset_P2_fields -> A1!1.1.-1 -> A1?1.1.-1 -> [if((-1 == -(1)))] -> [if((1 < 2))] -> [if((1 == 1))] -> P1Ack!-1.-1.-1 -> nack>
+
+
+
+//Error 5:
+//<init -> updateAllVars -> updateAllVars -> updateAllVars -> A1!1.1.-1 -> A1?1.1.-1 -> [if((-1 == -(1)))] -> [if!((1 < -1))] -> [if((1 == 1))] -> P1Ack!1.-1.-1 
+///-> updateAllVars -> A2!1.1.-1 -> A2?1.1.-1 -> [if((-1 == -(1)))] -> [if!((1 < -1))] -> L1!-1 -> L1?-1 -> update_val -> L2!-1 -> L2?-1 -> update_val -> [if((1 == 1))] 
+//-> P1Ack!1.-1.-1 -> updateAllVars -> A3!1.1.-1 -> A3?1.1.-1 -> [if((-1 == -(1)))] -> [if!((1 < -1))] -> [if((1 == 1))] -> P1Ack!1.-1.-1 -> updateAllVars -> P1Ack?1.-1.-1 
+//-> P1Ack?1.-1.-1 -> P1Ack?1.-1.-1 -> test1 -> test2 -> test3 -> [if!((P1_numPromises < 2))] -> findmax -> [if!((P1_max_m > -(1)))] -> A1!1.1.P1Val -> A1?1.1.P1Val 
+//-> [if!((P1Val == -(1)))] -> [if!((1 < 1))] -> L1!-1 -> L1?-1 -> update_val -> L2!-1 -> L2?-1 -> update_val -> [if((1 == 1))] -> P1Ack!1.1.P1Val -> updateAllVars 
+//-> A2!2.2.-1 -> A2?2.2.-1 -> [if((-1 == -(1)))] -> [if!((2 < 1))] -> L1!-1 -> L1?-1 -> update_val -> L2!-1 -> L2?-1 -> update_val -> [if!((2 == 1))] -> P2Ack!2.-1.-1 
+//-> updateAllVars -> A3!2.2.-1 -> A3?2.2.-1 -> [if((-1 == -(1)))] -> [if!((2 < 1))] -> [if!((2 == 1))] -> P2Ack!2.-1.-1 -> updateAllVars -> P2Ack?2.-1.-1 -> P2Ack?2.-1.-1 
+//-> test1 -> test2 -> [if!((P2_numPromises < 2))] -> findmax -> [if!((P2_max_m > -(1)))] -> A2!2.2.P2Val -> A2?2.2.P2Val -> [if!((P2Val == -(1)))] -> [if!((2 < 2))] 
+//-> [if!((2 == 1))] -> P2Ack!2.2.P2Val -> updateAllVars -> A3!2.2.P2Val -> A3?2.2.P2Val -> [if!((P2Val == -(1)))] -> [if!((2 < 2))] -> L1!-1 -> L1?-1 -> update_val 
+//-> L2!-1 -> L2?-1 -> update_val -> [if!((2 == 1))] -> P2Ack!2.2.P2Val -> updateAllVars>
+
+
+//Error 7:
+//<init -> updateAllVars -> updateAllVars -> updateAllVars -> A1!1.1.-1 -> A1?1.1.-1 -> [if((-1 == -(1)))] -> [if!((1 < -1))] -> [if((1 == 1))] -> P1Ack!1.-1.-1 
+//-> updateAllVars -> A2!1.1.-1 -> A2?1.1.-1 -> [if((-1 == -(1)))] -> [if!((1 < -1))] -> L1!-1 -> L1?-1 -> update_val -> L2!-1 -> L2?-1 -> update_val 
+//-> [if((1 == 1))] -> P1Ack!1.-1.-1 -> updateAllVars -> A3!1.1.-1 -> A3?1.1.-1 -> [if((-1 == -(1)))] -> [if!((1 < -1))] -> [if((1 == 1))] -> P1Ack!1.-1.-1 
+//-> updateAllVars -> P1Ack?1.-1.-1 -> P1Ack?1.-1.-1 -> P1Ack?1.-1.-1 -> test1 -> test2 -> test3 -> [if!((P1_numPromises < 2))] -> findmax 
+//-> [if!((P1_max_m > -(1)))] -> A1!1.1.P1Val -> A1?1.1.P1Val -> [if!((P1Val == -(1)))] -> [if!((1 < 1))] -> L1!-1 -> L1?-1 -> update_val -> L2!-1 -> L2?-1 
+//-> update_val -> [if((1 == 1))] -> P1Ack!1.1.P1Val -> updateAllVars -> A2!1.1.P1Val -> A2?1.1.P1Val -> [if!((P1Val == -(1)))] -> [if!((1 < 1))] -> [if((1 == 1))] -> P1Ack!1.1.P1Val -> updateAllVars>
