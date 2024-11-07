@@ -298,10 +298,56 @@ System_ConflictingProposers() = ConflictingProposer1Part2(1) ||| ConflictingProp
 ////SCENARIO 5: BASIC PAXOS WITH ACCEPTOR ACCEPTING 2 DIFFERENT VALUES
 // One propose only sends ACCEPT to one of the acceptors. The other proposer sends ACCEPT to the other 2 acceptors, achieveing consensus. 
 // 5. Acceptor Accepting Two Different Values
-System_AcceptorTwoValues() = FailedProposer(1) ||| Proposer2(2) ||| Acceptor1(-1, -1, -1) ||| Acceptor2(-1, -1, -1) ||| Acceptor3(-1, -1, -1) ||| Learner1() ||| Learner2();
+SemiFailedProposer1(n) = 
+  A1!1.n.-1 -> A2!1.n.-1 -> A3!1.n.-1 -> P1Ack?n1.m1.v1 -> P1Ack?n2.m2.v2 ->  P1Ack?n3.m3.v3 -> // Send PREPARE, receive PROMISE
+  test1{if(n1 == n) {P1_numPromises = P1_numPromises + 1;}} -> test2{if(n2==n) {P1_numPromises = P1_numPromises + 1;}} -> test3{if(n3==n) {P1_numPromises = P1_numPromises + 1;}} ->
+  if (P1_numPromises < 2) {reset_promises{P1_numPromises = 0;} -> SemiFailedProposer1(n+2)} // Did not receive majority promise, retry
+  else {
+      // Respond to majority promise
+      // Find the latest accepted value, if any
+    findmax {
+      var counter = 0;
+      var array_m = [m1, m2, m3];
+      var array_val = [v1, v2, v3];
+      while (counter < 2) {
+        if (P1_max_m < array_m[counter]) {P1_max_m = array_m[counter]; P1_max_val = array_val[counter];}
+        counter = counter + 1;
+      }} -> if (P1_max_m > -1) {
+        // Fail in the middle of sending ACCEPT, initiate new leader
+        A1!1.n.P1_max_val -> SemiFailedProposer2(2)
+      } else {
+            // Fail in the middle of sending ACCEPT, initiate new leader
+        A1!1.n.P1Val -> SemiFailedProposer2(2)
+      }
+  };
+  
+SemiFailedProposer2(n) = 
+  A2!2.n.-1 -> A3!2.n.-1 -> P2Ack?n1.m1.v1 -> P2Ack?n2.m2.v2 -> // Send PREPARE, receive PROMISE
+  test1{if(n1 == n) {P2_numPromises = P2_numPromises + 1;}} -> test2{if(n2==n) {P2_numPromises = P2_numPromises + 1;}} ->
+  if (P2_numPromises < 2) {reset_promises{P2_numPromises = 0;} -> SemiFailedProposer2(n+2)} // Did not receive majority promise, retry 
+  else {
+      // Respond to majority PROMISE/ACCEPTED
+      // Find the latest accepted value, if any
+    findmax {
+      var counter = 0;
+      var array_m = [m1, m2];
+      var array_val = [v1, v2];
+      while (counter < 2) {
+        if (P2_max_m < array_m[counter]) {P2_max_m = array_m[counter]; P2_max_val = array_val[counter];}
+        counter = counter + 1;
+      }} -> if (P2_max_m > -1) {
+        //something was accepted, send ACCEPT with the accepted value
+        A2!2.n.P2_max_val -> A3!2.n.P2_max_val -> reset_P2_fields{P2_numPromises = 0; P2_max_m = -1; P2_max_val = -1;} -> L1!P2_max_val -> L2!P2_max_val -> Stop
+      } else {
+          // Nothing accepted yet, send ACCEPT with our value
+        A2!2.n.P2Val -> A3!2.n.P2Val -> reset_P2_fields{P2_numPromises = 0; P2_max_m = -1; P2_max_val = -1;} -> Stop
+      }
+  };
+
+System_AcceptorTwoValues() = SemiFailedProposer1(1) ||| Acceptor1(-1, -1, -1) ||| Acceptor2(-1, -1, -1) ||| Acceptor3(-1, -1, -1) ||| Learner1() ||| Learner2();
 // We want the consensus to have the value of the surviving proposer that proposes its value after the first proposer fails.
-#define acceptorTwoValues_consensus (A1_last_val == A2_last_val && A1_last_val == P2Val) || (A1_last_val == A3_last_val && A1_last_val == P2Val) || (A2_last_val == A3_last_val && A2_last_val == P2Val);
-#assert System_AcceptorTwoValues() reaches acceptorTwoValues_consensus; // expect VALID
+#define acceptorTwoValues_consensus (A1_last_val == A2_last_val && A1_last_val == P2Val)  (A1_last_val == A3_last_val && A1_last_val == P2Val)  (A2_last_val == A3_last_val && A2_last_val == P2Val);
+#assert System_AcceptorTwoValues() |= <> acceptorTwoValues_consensus;
 
 
 // SCENARIO 6: BASIC PAXOS WITH INSUFFICIENT MULTI-IDENTIFIER MAJORITY
@@ -315,5 +361,32 @@ System_AcceptorTwoValues() = FailedProposer(1) ||| Proposer2(2) ||| Acceptor1(-1
 // A new proposer when entering is unable to prepare a majority that does not include at least one acceptor which has previously accepted a value. It is therefore forced to propose the same value.
 // Consensus shoudl be reached.
 
+
 // 7. New Proposers Unable to Change Existing Consensus
-// TODO
+NewProposer1(n) = 
+  A1!1.n.-1 -> A2!1.n.-1 -> A3!1.n.-1 -> P1Ack?n1.m1.v1 -> P1Ack?n2.m2.v2 ->  P1Ack?n3.m3.v3 -> // Send PREPARE, receive PROMISE
+  test1{if(n1 == n) {P1_numPromises = P1_numPromises + 1;}} -> test2{if(n2==n) {P1_numPromises = P1_numPromises + 1;}} -> test3{if(n3==n) {P1_numPromises = P1_numPromises + 1;}} ->
+  if (P1_numPromises < 2) {reset_promises{P1_numPromises = 0;} -> NewProposer1(n+2)} // Did not receive majority promise, retry
+  else {
+      // Respond to majority promise
+      // Find the latest accepted value, if any
+    findmax {
+      var counter = 0;
+      var array_m = [m1, m2, m3];
+      var array_val = [v1, v2, v3];
+      while (counter < 3) {
+        if (P1_max_m < array_m[counter]) {P1_max_m = array_m[counter]; P1_max_val = array_val[counter];}
+        counter = counter + 1;
+      }} -> if (P1_max_m > -1) {
+        // Fail after sending ACCEPT to two Acceptors, initiate new leader
+        A1!1.n.P1_max_val -> A2!1.n.P1_max_val -> Proposer2(2)
+      } else {
+            // Fail after sending ACCEPT to two Acceptors, initiate new leader
+        A1!1.n.P1Val -> A2!1.n.P1Val -> Proposer2(2)
+      }
+  };
+
+System_NewProposersCannotChangeConsensus() = NewProposer1(1) ||| Acceptor1(-1, -1, -1) ||| Acceptor2(-1, -1, -1) ||| Acceptor3(-1, -1, -1) ||| Learner1() ||| Learner2();
+// We want the consensus to have the value of the surviving proposer that proposes its value after the first proposer fails.
+#define newProposersCannotChangeConsensus_consensus (A1_last_val == A2_last_val && A1_last_val == P1Val)  (A1_last_val == A3_last_val && A1_last_val == P1Val)  (A2_last_val == A3_last_val && A2_last_val == P1Val);
+#assert System_NewProposersCannotChangeConsensus() |= <> newProposersCannotChangeConsensus_consensus;
